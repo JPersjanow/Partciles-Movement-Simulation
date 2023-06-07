@@ -259,7 +259,9 @@ class Dish:
             return True
 
     def _particle_bounce(self, particle_1: Particle, particle_2: Particle) -> bool:
-        particle_velocity_diff = abs(particle_1.velocity - particle_2.velocity)
+        """
+        Simulates perfectly buoyant impacts between particles
+        """
 
         if particle_1.velocity == 0 and particle_2.velocity == 0:
             return False
