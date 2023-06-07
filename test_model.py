@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 from log import setup_custom_logger
+from timeit import default_timer as timer
 
 
 class NoParticlesException(Exception):
@@ -39,13 +40,20 @@ class Particle:
 
 
 class Dish:
-    def __init__(self, number_radial, number_angles, min_escape_velocity):
+    def __init__(
+        self,
+        number_radial,
+        number_angles,
+        min_escape_velocity=2.0,
+        min_move_velocity=1.0,
+    ):
         self.log = setup_custom_logger("Dish")
         self.number_radial = number_radial
         self.number_angles = number_angles
         self.min_escape_velocity = (
             min_escape_velocity  # max density of particles in one cell
         )
+        self.min_move_velocity = min_move_velocity
         self.particles_charge_change_count = []
 
         self.density_array = np.zeros(
@@ -105,7 +113,7 @@ class Dish:
     def _add_single_particle(
         self, radial_pos, angle_pos, particle_object: Particle
     ) -> None:
-        print(f"Adding particle at position {radial_pos} {angle_pos}")
+        self.log.debug(f"Adding particle at position {radial_pos} {angle_pos}")
         self.density_array[radial_pos][angle_pos] += 1
 
         if not self.particles_array[radial_pos][angle_pos]:
@@ -250,6 +258,26 @@ class Dish:
             particle_2.change_charge()
             return True
 
+    def _particle_bounce(self, particle_1: Particle, particle_2: Particle) -> bool:
+        particle_velocity_diff = abs(particle_1.velocity - particle_2.velocity)
+
+        if particle_1.velocity == 0 and particle_2.velocity == 0:
+            return False
+        if particle_1.velocity == 0:
+            particle_1.velocity = particle_2.velocity
+            particle_2.velocity = 0
+            return True
+        if particle_2.velocity == 0:
+            particle_2.velocity = particle_1.velocity
+            particle_1.velocity = 0
+            return True
+        if particle_1 != 0 and particle_2 != 0:
+            initial_particle_1_velocity = particle_1.velocity
+            initial_particle_2_velocity = particle_2.velocity
+            particle_1.velocity = initial_particle_2_velocity
+            particle_2.velocity = initial_particle_1_velocity
+            return True
+
     def _change_single_particle_charge(
         self, radial_pos, angle_pos, particle_pos
     ) -> bool:
@@ -294,14 +322,22 @@ class Dish:
             particle_1=particle_to_change, particle_2=neighbour_particle_to_change
         )
 
-    def change_particles_charge(self, radial_pos, angle_pos, iteration):
+    def change_particle_charge(self, radial_pos, angle_pos, iteration=0):
+        if self.particles_array[radial_pos][angle_pos] is None:
+            return False
+
         should_change = bool(random.getrandbits(1))
         change = False
 
         if should_change:
             self.log.debug("Changing particle charge on random")
+            particle_to_change_pos = (
+                random.randint(0, len(self.particles_array[radial_pos][angle_pos])) - 1
+            )
             change = self._change_single_particle_charge(
-                radial_pos=radial_pos, angle_pos=angle_pos
+                radial_pos=radial_pos,
+                angle_pos=angle_pos,
+                particle_pos=particle_to_change_pos,
             )
         if change:
             self.log.debug("Particle charge changed")
@@ -312,6 +348,30 @@ class Dish:
         else:
             self.log.debug("Particle not changed")
 
+    def bounce_particles(self, radial_pos, angle_pos, iteration=0):
+        if self.particles_array[radial_pos][angle_pos] is None:
+            return False
+        current_density = len(self.particles_array[radial_pos][angle_pos])
+        self.log.debug(current_density)
+
+        if current_density <= 2:
+            return False
+
+        should_bounce = bool(random.getrandbits(1))
+
+        if should_bounce:
+            self.log.debug("Bouncing particles")
+            self.log.debug(
+                f"Available particles: {self.particles_array[radial_pos][angle_pos]}"
+            )
+            particle_to_bounce_1 = random.choice(
+                self.particles_array[radial_pos][angle_pos]
+            )
+            particle_to_bounce_2 = random.choice(
+                self.particles_array[radial_pos][angle_pos]
+            )
+            self._particle_bounce(particle_to_bounce_1, particle_to_bounce_2)
+
     def _escape_single_particle(self, radial_pos, angle_pos, particle_pos) -> None:
         self.particles_array[radial_pos][angle_pos].pop(particle_pos)
         self.density_array[radial_pos][angle_pos] -= 1
@@ -319,28 +379,15 @@ class Dish:
     def _move_single_particle(
         self, org_radial_pos, org_angle_pos, new_radial_pos, new_angle_pos, particle_pos
     ) -> None:
-        if self.particles_array[org_radial_pos][org_angle_pos] is None:
-            return False
-
-        # if particle is at the edge, check velocity, if it is not enough then movement is not executed
-        # if it is enough, throw the particle away from the dish
-        if (org_radial_pos + 1) >= self.number_radial:
-            particle: Particle = self.particles_array[org_radial_pos][org_angle_pos][
-                particle_pos
-            ]
-            if particle.velocity < self.min_escape_velocity:
-                return False
-            else:
-                self._escape_single_particle(
-                    org_radial_pos, org_angle_pos, particle_pos
-                )
-                return True
-
         self.density_array[org_radial_pos][org_angle_pos] -= 1
         self.density_array[new_radial_pos][new_angle_pos] += 1
 
         if self.particles_array[new_radial_pos][new_angle_pos] is None:
             self.particles_array[new_radial_pos][new_angle_pos] = []
+
+        self.particles_array[org_radial_pos][org_angle_pos][
+            particle_pos
+        ].velocity += 0.1
 
         self.particles_array[new_radial_pos][new_angle_pos].append(
             self.particles_array[org_radial_pos][org_angle_pos].pop(particle_pos)
@@ -352,28 +399,51 @@ class Dish:
         Particles movement vector is always directed towards edge of the dish
         """
 
+        if self.particles_array[radial_pos][angle_pos] is None:
+            return False
+        current_density = len(self.particles_array[radial_pos][angle_pos])
+        if current_density == 0:
+            return False
+
         edge_particle_neighbour, edge_neigbour_coord = self._return_edge_neighbour(
             self.particles_array, radial_pos, angle_pos
         )
-
         try:
             neighbour_density = len(edge_particle_neighbour)
         except TypeError:
             neighbour_density = 0
 
-        try:
-            current_density = len(self.particles_array[radial_pos][angle_pos])
-        except TypeError:
-            current_density = 0
+        particle_to_move_pos = (
+            random.randint(0, len(self.particles_array[radial_pos][angle_pos])) - 1
+        )
+
+        particle_to_move: Particle = self.particles_array[radial_pos][angle_pos][
+            particle_to_move_pos
+        ]
+
+        # if particle is at the edge, check velocity, if it is enough, throw the particle away from the dish
+        if (radial_pos + 1) >= self.number_radial:
+            if particle_to_move.velocity >= self.min_escape_velocity:
+                self._escape_single_particle(
+                    radial_pos, angle_pos, particle_to_move_pos
+                )
+                return True
+            else:
+                return False
 
         self.log.debug(
             f"""
-                       Current density: {current_density}
-                       Neighbour density: {neighbour_density}
-                       """
+            Current density: {current_density}
+            Neighbour density: {neighbour_density}
+            Particle vel: {particle_to_move.velocity}
+            """
         )
 
-        if current_density > neighbour_density:
+        # if density of neighbour is lower then move the particle or if velocity is high enough
+        if (
+            current_density > neighbour_density
+            or particle_to_move.velocity >= self.min_move_velocity
+        ):
             self.log.debug(
                 f"""
             Moving particle
@@ -381,16 +451,14 @@ class Dish:
             to: {edge_neigbour_coord["radial_pos"]} - {edge_neigbour_coord["angle_pos"]}
             """
             )
-            particle_to_move = (
-                random.randint(0, len(self.particles_array[radial_pos][angle_pos])) - 1
-            )
             self._move_single_particle(
                 radial_pos,
                 angle_pos,
                 edge_neigbour_coord["radial_pos"],
                 edge_neigbour_coord["angle_pos"],
-                particle_to_move,
+                particle_to_move_pos,
             )
+            return True
 
     def save_state_to_csv(self) -> None:
         pass
@@ -419,25 +487,59 @@ class Simulation:
     def __init__(
         self,
         number_of_iterations: int,
-        position_addition: str,
         dish_arguments_dict: dict,
     ) -> None:
-        dish = Dish(
+        self.dish = Dish(
             number_radial=dish_arguments_dict["number_radial"],
             number_angles=dish_arguments_dict["number_angles"],
             min_escape_velocity=dish_arguments_dict["min_escape_velocity"],
+            min_move_velocity=dish_arguments_dict["min_move_velocity"],
+        )
+        self.dish.add_particles(
+            amount=dish_arguments_dict["initial_amount"],
+            position=dish_arguments_dict["position"],
         )
 
         self.iter_number = number_of_iterations
-        self_addition_position = position_addition
+        self.iter_addition_amount = dish_arguments_dict["iter_addition_amount"]
+        self.log = setup_custom_logger("Simulation")
 
     def simulate(self):
-        for iter in range(self.iter_number):
-            pass
+        start = timer()
+        for current_iteration in range(self.iter_number):
+            self.log.info(f"--------ITERATION NUMBER: {current_iteration}--------")
+            self.iterate_over_dish(current_iteration)
+        end = timer()
+        self.log.info(f"Simulation time:")
+        self.log.info(end - start)
+        self.dish.plot_density(save=True)
+
+    def iterate_over_dish(self, iteration_number):
+        for radial_pos, radial in enumerate(self.dish.density_array):
+            for angle_pos, angle in enumerate(radial):
+                self.dish.move_particles(radial_pos=radial_pos, angle_pos=angle_pos)
+                self.dish.change_particle_charge(
+                    radial_pos=radial_pos,
+                    angle_pos=angle_pos,
+                    iteration=iteration_number,
+                )
+                self.dish.bounce_particles(
+                    radial_pos=radial_pos,
+                    angle_pos=angle_pos,
+                    iteration=iteration_number,
+                )
+        self.dish.add_particles(amount=self.iter_addition_amount, position="centre")
 
 
 if __name__ == "__main__":
-    dish = Dish(10, 100, 10)
-    dish.add_particles(100, position="random")
-    dish.plot_density(True)
-    print()
+    dish = {
+        "number_radial": 10,
+        "number_angles": 100,
+        "min_escape_velocity": 2.0,
+        "min_move_velocity": 1.0,
+        "initial_amount": 100,
+        "position": "centre",
+        "iter_addition_amount": 100,
+    }
+    sim = Simulation(number_of_iterations=100, dish_arguments_dict=dish)
+    sim.simulate()

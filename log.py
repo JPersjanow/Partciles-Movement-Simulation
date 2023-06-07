@@ -27,7 +27,7 @@ def setup_custom_logger(name):
 
         logger = logging.getLogger(name)
         logger.setLevel(logging.DEBUG)
-        logger.addHandler(handler)
+        # logger.addHandler(handler)
         logger.addHandler(file_handler)
 
     return logger
