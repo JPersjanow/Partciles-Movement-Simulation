@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 import os
+import glob
 from log import setup_custom_logger
 from timeit import default_timer as timer
 
@@ -51,6 +52,7 @@ class Dish:
         number_of_iterations,
         min_escape_velocity=2.0,
         min_move_velocity=1.0,
+        min_move_density=10,
     ):
         self.log = setup_custom_logger("Dish")
         self.number_radial = number_radial
@@ -59,6 +61,8 @@ class Dish:
             min_escape_velocity  # max density of particles in one cell
         )
         self.min_move_velocity = min_move_velocity
+        self.min_move_density = min_move_density
+        self.number_of_iterations = number_of_iterations
         self.particles_charge_change_count = np.zeros(number_of_iterations, dtype=int)
         self.particles_off_system_count = np.zeros(number_of_iterations, dtype=int)
         self.particles_amount_count = np.zeros(number_of_iterations, dtype=int)
@@ -70,9 +74,6 @@ class Dish:
         self.particles_array = np.empty(
             (self.number_radial, self.number_angles), dtype=list
         )
-
-        self.angles_array = np.linspace(0, 2 * np.pi, number_angles + 1)
-        self.radial_array = np.linspace(0, number_radial, number_radial + 1)
 
     def add_particles(
         self,
@@ -451,9 +452,11 @@ class Dish:
             else:
                 return False
 
-        # if density of neighbour is lower then move the particle or if velocity is high enough
+        # Move the particle when:
+        # 1) density of neighbour is lower current density
+        # 2) if velocity is high enough
         if (
-            current_density > neighbour_density
+            self.min_move_density <= current_density > neighbour_density
             or particle_to_move.velocity >= self.min_move_velocity
         ):
             self.log.info(f"Moving particle from: [{radial_pos}][{angle_pos}]")
@@ -479,8 +482,11 @@ class Dish:
             np.save(statefile_da, self.density_array)
 
     def save_counters(self) -> None:
+        parciles_amount = np.subtract(
+            self.particles_amount_count, self.particles_off_system_count
+        )
         counter_filenames = {
-            "pcount.npy": self.particles_amount_count,
+            "pcount.npy": parciles_amount,
             "pOFFcount.npy": self.particles_off_system_count,
             "pBcount.npy": self.particles_bounce_count,
             "pCcount.npy": self.particles_charge_change_count,
@@ -490,12 +496,33 @@ class Dish:
             with open(counter_filename, "wb") as counterfile:
                 np.save(counterfile, counter)
 
-    def plot_density(self, save=True) -> None:
+
+class Plotter:
+    def __init__(
+        self,
+        dish_arguments_dict: dict,
+        states_directory: str = "states",
+        fig_directory: str = "figs",
+    ) -> None:
+        self.states_directory = states_directory
+        self.fig_directory = fig_directory
+        self.all_da_files = glob.glob(os.path.join(states_directory, "*_da.npy"))
+        self.all_da_files.sort()
+        self.all_pa_files = glob.glob(os.path.join(states_directory, "*_pa.npy"))
+        self.all_pa_files.sort()
+
+        self.number_radial = dish_arguments_dict["number_radial"]
+        self.number_angles = dish_arguments_dict["number_angles"]
+
+        self.angles_array = np.linspace(0, 2 * np.pi, self.number_angles + 1)
+        self.radial_array = np.linspace(0, self.number_radial, self.number_radial + 1)
+
+    def plot_density(self, density_array: np.array, iteration=0, save=True) -> None:
         fig, ax = plt.subplots(subplot_kw=dict(projection="polar"))
         cb = ax.pcolormesh(
             self.angles_array,
             self.radial_array,
-            self.density_array,
+            density_array,
             edgecolors="k",
             linewidths=1,
         )
@@ -505,9 +532,20 @@ class Dish:
         plt.colorbar(cb, orientation="vertical")
 
         if save:
-            plt.savefig(f"dish.png")
+            fig_filename = f"{self.fig_directory}/dish-{iteration}.png"
+            os.makedirs(os.path.dirname(fig_filename), exist_ok=True)
+            plt.savefig(fig_filename)
+            plt.close()
         else:
             plt.show()
+
+    def plot_density_change(self):
+        for index, da_file in enumerate(self.all_da_files):
+            with open(da_file, "rb") as daf:
+                density = np.load(daf)
+
+            self.plot_density(density_array=density, iteration=index)
+            del density
 
 
 class Simulation:
@@ -522,6 +560,7 @@ class Simulation:
             number_angles=dish_arguments_dict["number_angles"],
             min_escape_velocity=dish_arguments_dict["min_escape_velocity"],
             min_move_velocity=dish_arguments_dict["min_move_velocity"],
+            min_move_density=dish_arguments_dict["min_move_density"],
             number_of_iterations=number_of_iterations,
         )
         self.dish.add_particles(
@@ -551,7 +590,6 @@ class Simulation:
         self.log.info(f"Simulation time:")
         self.log.info(end - start)
         self.dish.save_counters()
-        self.dish.plot_density(save=True)
 
     def iterate_over_dish(self, iteration_number):
         for radial_pos, radial in enumerate(self.dish.density_array):
@@ -584,6 +622,7 @@ if __name__ == "__main__":
         "number_angles": 100,
         "min_escape_velocity": 2.0,
         "min_move_velocity": 1.0,
+        "min_move_density": 10,
         "initial_amount": 100,
         "position": "centre",
         "iter_addition_amount": 100,
@@ -592,3 +631,6 @@ if __name__ == "__main__":
     }
     sim = Simulation(number_of_iterations=1000, dish_arguments_dict=dish)
     sim.simulate()
+
+    plot = Plotter(dish_arguments_dict=dish)
+    plot.plot_density_change()
