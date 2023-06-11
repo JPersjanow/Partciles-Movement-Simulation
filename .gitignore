@@ -1,3 +1,10 @@
 .idea
 *.log
 *.png
+.vscode
+counters/**
+states/**
+venv/**
+__pycache__/**
+*.npy
+*.gif
