@@ -7,3 +7,4 @@ states/**
 venv/**
 __pycache__/**
 *.npy
+*.gif
