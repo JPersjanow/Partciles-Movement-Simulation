@@ -3,7 +3,7 @@
     "number_angles": 100,
     "min_escape_velocity": 2.0,
     "min_move_velocity": 1.0,
-    "min_move_density": 10,
+    "min_move_density": 0,
     "initial_amount": 100,
     "position": "centre",
     "iter_addition_amount": 100,
