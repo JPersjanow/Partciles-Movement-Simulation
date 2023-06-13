@@ -577,8 +577,9 @@ class Simulation:
         self.iter_number = number_of_iterations
         self.iter_addition_amount = dish_arguments_dict["iter_addition_amount"]
         self.save_state = dish_arguments_dict["save_state"]
-        self.save_particles = dish_arguments_dict["save_particles"]
-        self.save_iteration = dish_arguments_dict["save_iteration"]
+        # TODO: change to real bool values
+        self.save_particles = bool(dish_arguments_dict["save_particles"])
+        self.save_iteration = bool(dish_arguments_dict["save_iteration"])
         self.log = setup_custom_logger("Simulation", cmd_output=logger_cmd_output)
 
     def simulate(self):
@@ -650,7 +651,7 @@ class FileParser:
         particles_array = None
         dish_arguments = None
         with open(self.dish_parameters_file, "r") as paramfile:
-            dishdish_arguments_dict = json.loads(paramfile.read().replace("'", '"'))
+            dish_arguments = json.loads(paramfile.read().replace("'", '"'))
 
         if not self.simulate_from_start:
             with open(self.dish_density_state_file, "rb") as densitystatefile:
@@ -683,7 +684,7 @@ if __name__ == "__main__":
     )
 
     dish_arguments, density_array, particles_array = fp.parse_and_return()
-
+    sim = None
     try:
         sim = Simulation(
             number_of_iterations=int(args.number_of_iterations),
@@ -693,12 +694,16 @@ if __name__ == "__main__":
             sim.dish.particles_array = particles_array
             sim.dish.density_array = density_array
 
+        # Delete arrays because they might be big (especially particles array as it stores objects)
         del density_array
         del particles_array
 
         sim.simulate()
     except Exception as e:
-        sim.dish.save_state(iteration="ERROR", save_density=True, save_particles=True)
+        if sim:
+            sim.dish.save_state(
+                iteration="ERROR", save_density=True, save_particles=True
+            )
         raise e
 
     plot = Plotter(dish_arguments_dict=dish_arguments)
