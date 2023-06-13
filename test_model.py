@@ -472,18 +472,20 @@ class Dish:
             )
             return True
 
-    def save_state(self, iteration=0, save_particles=False) -> None:
+    def save_state(self, iteration=0, save_particles=False, save_density=True) -> None:
         self.log.info(f"Saving states for iteration {iteration}")
-        statefilename_da = f"states/{iteration}_da.npy"
-        os.makedirs(os.path.dirname(statefilename_da), exist_ok=True)
 
         if save_particles:
             statefilename_pa = f"states/{iteration}_pa.npy"
+            os.makedirs(os.path.dirname(statefilename_pa), exist_ok=True)
             with open(statefilename_pa, "wb") as statefile_pa:
                 np.save(statefile_pa, self.particles_array)
 
-        with open(statefilename_da, "wb") as statefile_da:
-            np.save(statefile_da, self.density_array)
+        if save_density:
+            statefilename_da = f"states/{iteration}_da.npy"
+            os.makedirs(os.path.dirname(statefilename_da), exist_ok=True)
+            with open(statefilename_da, "wb") as statefile_da:
+                np.save(statefile_da, self.density_array)
 
     def save_counters(self) -> None:
         parciles_amount = np.subtract(
@@ -585,10 +587,7 @@ class Simulation:
             self.log.info(f"ITERATION NUMBER: {current_iteration}")
             self.iterate_over_dish(current_iteration)
 
-            if self.save_state and (
-                current_iteration % self.save_iteration == 0
-                or current_iteration == self.iter_number
-            ):
+            if self.save_state and current_iteration % self.save_iteration == 0:
                 self.dish.save_state(
                     iteration=current_iteration, save_particles=self.save_particles
                 )
@@ -597,6 +596,10 @@ class Simulation:
         self.log.info(f"Simulation time:")
         self.log.info(end - start)
         self.dish.save_counters()
+        if self.save_state:
+            self.dish.save_state(
+                iteration=current_iteration, save_density=True, save_particles=True
+            )
 
     def iterate_over_dish(self, iteration_number):
         for radial_pos, radial in enumerate(self.dish.density_array):
@@ -628,49 +631,75 @@ class FileParser:
         self,
         simulate_from_start: bool,
         dish_parameters_file: str = None,
-        dish_state_file: str = None,
+        dish_state_dir: str = None,
+        dish_state_number: str = None,
     ):
         self.simulate_from_start = simulate_from_start
         self.dish_parameters_file = dish_parameters_file
-        self.dish_state_file = dish_state_file
+        if dish_state_dir and dish_state_number:
+            self.dish_state_dir = dish_state_dir
+            self.dish_partcile_state_file = os.path.join(
+                dish_state_dir, f"{dish_state_number}_pa.npy"
+            )
+            self.dish_density_state_file = os.path.join(
+                dish_state_dir, f"{dish_state_number}_da.npy"
+            )
 
-    def parse(self):
-        if self.simulate_from_start:
-            dish_dict = None
-            with open(self.dish_parameters_file, "r") as paramfile:
-                dish_dict = json.loads(paramfile.read().replace("'", '"'))
-                return dish_dict
-        else:
-            density_array = None
-            with open(self.dish_state_file, "rb") as statefile:
-                density_array = np.load(statefile)
-                return density_array
+    def parse_and_return(self):
+        density_array = None
+        particles_array = None
+        dish_arguments = None
+        with open(self.dish_parameters_file, "r") as paramfile:
+            dishdish_arguments_dict = json.loads(paramfile.read().replace("'", '"'))
+
+        if not self.simulate_from_start:
+            with open(self.dish_density_state_file, "rb") as densitystatefile:
+                density_array = np.load(densitystatefile)
+            with open(self.dish_partcile_state_file, "rb") as particlestatefile:
+                particles_array = np.load(particlestatefile, allow_pickle=True)
+                return density_array, particles_array
+
+        return dish_arguments, density_array, particles_array
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--simulate_from_start", "-startsim", action="store_true")
     parser.add_argument(
-        "--dish_parameters_file", "-dpf", required="--simulate_from_start" in sys.argv
+        "--dish_state_dir", "-dsd", required="--simulate_from_start" not in sys.argv
     )
     parser.add_argument(
-        "--dish_state_file", "-dsf", required="--simulate_from_start" not in sys.argv
+        "--dish_state_number", "-dsn", required="--dish_state_dir" in sys.argv
     )
+    parser.add_argument("--dish_parameters_file", "-dpf", required=True)
     parser.add_argument("--number_of_iterations", "-niter", required=True)
     args = parser.parse_args()
 
     fp = FileParser(
         simulate_from_start=args.simulate_from_start,
         dish_parameters_file=args.dish_parameters_file,
-        dish_state_file=args.dish_state_file,
+        dish_state_dir=args.dish_state_dir,
+        dish_state_number=args.dish_state_number,
     )
 
-    dish_arguments = fp.parse()
-    sim = Simulation(
-        number_of_iterations=int(args.number_of_iterations),
-        dish_arguments_dict=dish_arguments,
-    )
-    sim.simulate()
+    dish_arguments, density_array, particles_array = fp.parse_and_return()
+
+    try:
+        sim = Simulation(
+            number_of_iterations=int(args.number_of_iterations),
+            dish_arguments_dict=dish_arguments,
+        )
+        if not args.simulate_from_start:
+            sim.dish.particles_array = particles_array
+            sim.dish.density_array = density_array
+
+        del density_array
+        del particles_array
+
+        sim.simulate()
+    except Exception as e:
+        sim.dish.save_state(iteration="ERROR", save_density=True, save_particles=True)
+        raise e
 
     plot = Plotter(dish_arguments_dict=dish_arguments)
     plot.plot_density_change()
