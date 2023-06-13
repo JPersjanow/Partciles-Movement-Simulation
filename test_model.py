@@ -577,9 +577,8 @@ class Simulation:
         self.iter_number = number_of_iterations
         self.iter_addition_amount = dish_arguments_dict["iter_addition_amount"]
         self.save_state = dish_arguments_dict["save_state"]
-        # TODO: change to real bool values
-        self.save_particles = bool(dish_arguments_dict["save_particles"])
-        self.save_iteration = bool(dish_arguments_dict["save_iteration"])
+        self.save_particles = dish_arguments_dict["save_particles"]
+        self.save_iteration = dish_arguments_dict["save_iteration"]
         self.log = setup_custom_logger("Simulation", cmd_output=logger_cmd_output)
 
     def simulate(self):

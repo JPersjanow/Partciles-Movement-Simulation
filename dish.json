@@ -7,7 +7,7 @@
     "initial_amount": 100,
     "position": "centre",
     "iter_addition_amount": 100,
-    "save_state": "True",
-    "save_particles": "False",
+    "save_state": true,
+    "save_particles": false,
     "save_iteration": 10
 }
