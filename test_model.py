@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import random
 import os
 import glob
+import argparse
+import sys
+import json
 from log import setup_custom_logger
 from timeit import default_timer as timer
 
@@ -469,17 +472,20 @@ class Dish:
             )
             return True
 
-    def save_state(self, iteration=0) -> None:
-        self.log.info("Saving states and counters for iteration")
-        statefilename_pa = f"states/{iteration}_pa.npy"
-        statefilename_da = f"states/{iteration}_da.npy"
-        os.makedirs(os.path.dirname(statefilename_pa), exist_ok=True)
+    def save_state(self, iteration=0, save_particles=False, save_density=True) -> None:
+        self.log.info(f"Saving states for iteration {iteration}")
 
-        with open(statefilename_pa, "wb") as statefile_pa:
-            np.save(statefile_pa, self.particles_array)
+        if save_particles:
+            statefilename_pa = f"states/{iteration}_pa.npy"
+            os.makedirs(os.path.dirname(statefilename_pa), exist_ok=True)
+            with open(statefilename_pa, "wb") as statefile_pa:
+                np.save(statefile_pa, self.particles_array)
 
-        with open(statefilename_da, "wb") as statefile_da:
-            np.save(statefile_da, self.density_array)
+        if save_density:
+            statefilename_da = f"states/{iteration}_da.npy"
+            os.makedirs(os.path.dirname(statefilename_da), exist_ok=True)
+            with open(statefilename_da, "wb") as statefile_da:
+                np.save(statefile_da, self.density_array)
 
     def save_counters(self) -> None:
         parciles_amount = np.subtract(
@@ -571,6 +577,7 @@ class Simulation:
         self.iter_number = number_of_iterations
         self.iter_addition_amount = dish_arguments_dict["iter_addition_amount"]
         self.save_state = dish_arguments_dict["save_state"]
+        self.save_particles = dish_arguments_dict["save_particles"]
         self.save_iteration = dish_arguments_dict["save_iteration"]
         self.log = setup_custom_logger("Simulation", cmd_output=logger_cmd_output)
 
@@ -580,16 +587,19 @@ class Simulation:
             self.log.info(f"ITERATION NUMBER: {current_iteration}")
             self.iterate_over_dish(current_iteration)
 
-            if self.save_state and (
-                current_iteration % self.save_iteration == 0
-                or current_iteration == self.iter_number
-            ):
-                self.dish.save_state(iteration=current_iteration)
+            if self.save_state and current_iteration % self.save_iteration == 0:
+                self.dish.save_state(
+                    iteration=current_iteration, save_particles=self.save_particles
+                )
 
         end = timer()
         self.log.info(f"Simulation time:")
         self.log.info(end - start)
         self.dish.save_counters()
+        if self.save_state:
+            self.dish.save_state(
+                iteration=current_iteration, save_density=True, save_particles=True
+            )
 
     def iterate_over_dish(self, iteration_number):
         for radial_pos, radial in enumerate(self.dish.density_array):
@@ -616,21 +626,84 @@ class Simulation:
         )
 
 
-if __name__ == "__main__":
-    dish = {
-        "number_radial": 20,
-        "number_angles": 100,
-        "min_escape_velocity": 2.0,
-        "min_move_velocity": 1.0,
-        "min_move_density": 10,
-        "initial_amount": 100,
-        "position": "centre",
-        "iter_addition_amount": 100,
-        "save_state": True,
-        "save_iteration": 10,
-    }
-    sim = Simulation(number_of_iterations=1000, dish_arguments_dict=dish)
-    sim.simulate()
+class FileParser:
+    def __init__(
+        self,
+        simulate_from_start: bool,
+        dish_parameters_file: str = None,
+        dish_state_dir: str = None,
+        dish_state_number: str = None,
+    ):
+        self.simulate_from_start = simulate_from_start
+        self.dish_parameters_file = dish_parameters_file
+        if dish_state_dir and dish_state_number:
+            self.dish_state_dir = dish_state_dir
+            self.dish_partcile_state_file = os.path.join(
+                dish_state_dir, f"{dish_state_number}_pa.npy"
+            )
+            self.dish_density_state_file = os.path.join(
+                dish_state_dir, f"{dish_state_number}_da.npy"
+            )
 
-    plot = Plotter(dish_arguments_dict=dish)
+    def parse_and_return(self):
+        density_array = None
+        particles_array = None
+        dish_arguments = None
+        with open(self.dish_parameters_file, "r") as paramfile:
+            dish_arguments = json.loads(paramfile.read().replace("'", '"'))
+
+        if not self.simulate_from_start:
+            with open(self.dish_density_state_file, "rb") as densitystatefile:
+                density_array = np.load(densitystatefile)
+            with open(self.dish_partcile_state_file, "rb") as particlestatefile:
+                particles_array = np.load(particlestatefile, allow_pickle=True)
+                return density_array, particles_array
+
+        return dish_arguments, density_array, particles_array
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--simulate_from_start", "-startsim", action="store_true")
+    parser.add_argument(
+        "--dish_state_dir", "-dsd", required="--simulate_from_start" not in sys.argv
+    )
+    parser.add_argument(
+        "--dish_state_number", "-dsn", required="--dish_state_dir" in sys.argv
+    )
+    parser.add_argument("--dish_parameters_file", "-dpf", required=True)
+    parser.add_argument("--number_of_iterations", "-niter", required=True)
+    args = parser.parse_args()
+
+    fp = FileParser(
+        simulate_from_start=args.simulate_from_start,
+        dish_parameters_file=args.dish_parameters_file,
+        dish_state_dir=args.dish_state_dir,
+        dish_state_number=args.dish_state_number,
+    )
+
+    dish_arguments, density_array, particles_array = fp.parse_and_return()
+    sim = None
+    try:
+        sim = Simulation(
+            number_of_iterations=int(args.number_of_iterations),
+            dish_arguments_dict=dish_arguments,
+        )
+        if not args.simulate_from_start:
+            sim.dish.particles_array = particles_array
+            sim.dish.density_array = density_array
+
+        # Delete arrays because they might be big (especially particles array as it stores objects)
+        del density_array
+        del particles_array
+
+        sim.simulate()
+    except Exception as e:
+        if sim:
+            sim.dish.save_state(
+                iteration="ERROR", save_density=True, save_particles=True
+            )
+        raise e
+
+    plot = Plotter(dish_arguments_dict=dish_arguments)
     plot.plot_density_change()
