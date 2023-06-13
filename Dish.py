@@ -458,5 +458,6 @@ class Dish:
 
         for counter_filename, counter in counter_filenames.items():
             counter_filename = os.path.join("counts", counter_filename)
+            os.makedirs(os.path.dirname(counter_filename), exist_ok=True)
             with open(counter_filename, "wb") as counterfile:
                 np.save(counterfile, counter)
