@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import random
 import os
 import glob
+import argparse
+import sys
+import json
 from log import setup_custom_logger
 from timeit import default_timer as timer
 
@@ -469,14 +472,15 @@ class Dish:
             )
             return True
 
-    def save_state(self, iteration=0) -> None:
-        self.log.info("Saving states and counters for iteration")
-        statefilename_pa = f"states/{iteration}_pa.npy"
+    def save_state(self, iteration=0, save_particles=False) -> None:
+        self.log.info(f"Saving states for iteration {iteration}")
         statefilename_da = f"states/{iteration}_da.npy"
-        os.makedirs(os.path.dirname(statefilename_pa), exist_ok=True)
+        os.makedirs(os.path.dirname(statefilename_da), exist_ok=True)
 
-        with open(statefilename_pa, "wb") as statefile_pa:
-            np.save(statefile_pa, self.particles_array)
+        if save_particles:
+            statefilename_pa = f"states/{iteration}_pa.npy"
+            with open(statefilename_pa, "wb") as statefile_pa:
+                np.save(statefile_pa, self.particles_array)
 
         with open(statefilename_da, "wb") as statefile_da:
             np.save(statefile_da, self.density_array)
@@ -571,6 +575,7 @@ class Simulation:
         self.iter_number = number_of_iterations
         self.iter_addition_amount = dish_arguments_dict["iter_addition_amount"]
         self.save_state = dish_arguments_dict["save_state"]
+        self.save_particles = dish_arguments_dict["save_particles"]
         self.save_iteration = dish_arguments_dict["save_iteration"]
         self.log = setup_custom_logger("Simulation", cmd_output=logger_cmd_output)
 
@@ -584,7 +589,9 @@ class Simulation:
                 current_iteration % self.save_iteration == 0
                 or current_iteration == self.iter_number
             ):
-                self.dish.save_state(iteration=current_iteration)
+                self.dish.save_state(
+                    iteration=current_iteration, save_particles=self.save_particles
+                )
 
         end = timer()
         self.log.info(f"Simulation time:")
@@ -616,21 +623,54 @@ class Simulation:
         )
 
 
+class FileParser:
+    def __init__(
+        self,
+        simulate_from_start: bool,
+        dish_parameters_file: str = None,
+        dish_state_file: str = None,
+    ):
+        self.simulate_from_start = simulate_from_start
+        self.dish_parameters_file = dish_parameters_file
+        self.dish_state_file = dish_state_file
+
+    def parse(self):
+        if self.simulate_from_start:
+            dish_dict = None
+            with open(self.dish_parameters_file, "r") as paramfile:
+                dish_dict = json.loads(paramfile.read().replace("'", '"'))
+                return dish_dict
+        else:
+            density_array = None
+            with open(self.dish_state_file, "rb") as statefile:
+                density_array = np.load(statefile)
+                return density_array
+
+
 if __name__ == "__main__":
-    dish = {
-        "number_radial": 20,
-        "number_angles": 100,
-        "min_escape_velocity": 2.0,
-        "min_move_velocity": 1.0,
-        "min_move_density": 10,
-        "initial_amount": 100,
-        "position": "centre",
-        "iter_addition_amount": 100,
-        "save_state": True,
-        "save_iteration": 10,
-    }
-    sim = Simulation(number_of_iterations=1000, dish_arguments_dict=dish)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--simulate_from_start", "-startsim", action="store_true")
+    parser.add_argument(
+        "--dish_parameters_file", "-dpf", required="--simulate_from_start" in sys.argv
+    )
+    parser.add_argument(
+        "--dish_state_file", "-dsf", required="--simulate_from_start" not in sys.argv
+    )
+    parser.add_argument("--number_of_iterations", "-niter", required=True)
+    args = parser.parse_args()
+
+    fp = FileParser(
+        simulate_from_start=args.simulate_from_start,
+        dish_parameters_file=args.dish_parameters_file,
+        dish_state_file=args.dish_state_file,
+    )
+
+    dish_arguments = fp.parse()
+    sim = Simulation(
+        number_of_iterations=int(args.number_of_iterations),
+        dish_arguments_dict=dish_arguments,
+    )
     sim.simulate()
 
-    plot = Plotter(dish_arguments_dict=dish)
+    plot = Plotter(dish_arguments_dict=dish_arguments)
     plot.plot_density_change()
