@@ -39,7 +39,7 @@ class Plotter:
         plt.colorbar(cb, orientation="vertical")
 
         if save:
-            fig_filename = f"{self.fig_directory}/dish-{iteration}.png"
+            fig_filename = os.path.join(self.fig_directory, f"dish-{iteration}.png")
             os.makedirs(os.path.dirname(fig_filename), exist_ok=True)
             plt.savefig(fig_filename)
             plt.close()
