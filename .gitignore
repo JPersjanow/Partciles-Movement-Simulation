@@ -8,3 +8,4 @@ venv/**
 __pycache__/**
 *.npy
 *.gif
+.DS_Store

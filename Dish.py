@@ -310,6 +310,7 @@ class Dish:
         )
 
     def change_particle_charge(self, radial_pos, angle_pos, iteration=0):
+        # TODO: Change to _does_contain_particles
         if self.particles_array[radial_pos][angle_pos] is None:
             return False
 
@@ -329,6 +330,7 @@ class Dish:
             self._add_to_counter(self.particles_charge_change_count, iteration)
 
     def bounce_particles(self, radial_pos, angle_pos, iteration=0):
+        # TODO: Change to _does_contain_particles
         if self.particles_array[radial_pos][angle_pos] is None:
             return False
         current_density = len(self.particles_array[radial_pos][angle_pos])
@@ -376,7 +378,7 @@ class Dish:
         """
         Particles movement vector is always directed towards edge of the dish
         """
-
+        # TODO: Change to _does_contain_particles
         if self.particles_array[radial_pos][angle_pos] is None:
             return False
         current_density = len(self.particles_array[radial_pos][angle_pos])
